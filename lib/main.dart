@@ -1,15 +1,6 @@
-// Smart Pet Feeder v0.6
-//
-// Home · History · Settings 탭 + 자동급여(시간·g·요일) + CSV 내보내기 + 캘리브레이션
-// ▸ Firebase Realtime Database 구조
-//   - commands/feed, commands/diagnose
-//   - device_status, diagnosis_log
-//   - feeding_log
-//   - auto_schedule/{enabled,breakfast,lunch,dinner,breakfast_g,lunch_g,dinner_g,days}
-// ▸ FCM 토큰은 users/default/fcm_token 에 저장하여 푸시 알림용으로 사용
-// ---------------------------------------------------------------------------
 import 'dart:async';
 import 'dart:io';
+
 import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -18,9 +9,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+
 import 'firebase_options.dart';
 
-/* ───────────────  App Entry  ─────────────── */
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -33,49 +24,57 @@ void main() async {
         .set(token)
         .catchError((_) {});
   }
+
   runApp(const MyApp());
 }
 
-/* ───────────────  Root with NavBar  ─────────────── */
-class MyApp extends StatefulWidget {
+/* ─────────────────────────────── AppRoot ─────────────────────────────── */
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
-  State<MyApp> createState() => _MyAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Smart Pet Feeder',
+      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      darkTheme: ThemeData(
+        colorSchemeSeed: Colors.teal,
+        brightness: Brightness.dark,
+        useMaterial3: true,
+      ),
+      themeMode: ThemeMode.system,
+      home: const MainScreen(),
+    );
+  }
 }
 
-class _MyAppState extends State<MyApp> {
-  int _index = 0;
-  final _pages = const [HomePage(), HistoryPage(), SettingsPage()];
+/* ─────────────────────────────── MainScreen ─────────────────────────────── */
+class MainScreen extends StatelessWidget {
+  const MainScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final seed = Colors.teal;
-    return MaterialApp(
-      title: 'Smart Pet Feeder',
-      themeMode: ThemeMode.system,
-      theme: ThemeData(colorSchemeSeed: seed, useMaterial3: true),
-      darkTheme:
-      ThemeData(colorSchemeSeed: seed, brightness: Brightness.dark, useMaterial3: true),
-      home: Scaffold(
-        body: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
-          child: _pages[_index],
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Smart Pet Feeder'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.home), text: 'Home'),
+              Tab(icon: Icon(Icons.history), text: 'History'),
+              Tab(icon: Icon(Icons.settings), text: 'Settings'),
+            ],
+          ),
         ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _index,
-          destinations: const [
-            NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
-            NavigationDestination(icon: Icon(Icons.list), label: 'History'),
-            NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
-          ],
-          onDestinationSelected: (i) => setState(() => _index = i),
+        body: const TabBarView(
+          children: [HomePage(), HistoryPage(), SettingsPage()],
         ),
       ),
     );
   }
 }
 
-/* ─────────────────────────────── ① Home ─────────────────────────────── */
+/* ─────────────────────────────── Home ─────────────────────────────── */
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
@@ -86,7 +85,6 @@ class _HomeState extends State<HomePage> {
   final db = FirebaseDatabase.instance.ref();
   late final StreamSubscription _diagSub, _statusSub;
 
-  // 상태 변수
   String _diag = '진단 대기 중…';
   String? _imgUrl;
   bool _online = false;
@@ -101,8 +99,9 @@ class _HomeState extends State<HomePage> {
       final m = e.snapshot.value as Map?;
       if (m == null) return;
       setState(() {
-        _diag =
-        m['result'] is List ? (m['result'] as List).join(', ') : (m['result']?.toString() ?? '결과 없음');
+        _diag = m['result'] is List
+            ? (m['result'] as List).join(', ')
+            : (m['result']?.toString() ?? '결과 없음');
         _imgUrl = m['image_url'];
       });
     });
@@ -127,7 +126,7 @@ class _HomeState extends State<HomePage> {
     await db.child('commands/feed').set({
       'request_id': '${DateTime.now().millisecondsSinceEpoch}',
       'amount_g': g,
-      'issued_at': DateTime.now().toUtc().toIso8601String()
+      'issued_at': DateTime.now().toUtc().toIso8601String(),
     });
     _snack('$g g 급여 명령 전송');
   }
@@ -140,94 +139,89 @@ class _HomeState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Smart Pet Feeder'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16, top: 8),
-            child: Chip(
-              label: Text(_online ? '온라인' : '오프라인',
-                  style: const TextStyle(color: Colors.white)),
-              backgroundColor: _online ? Colors.green : Colors.red,
-            ),
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          _card(
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('사료 급여',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _gCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: '급여량(g)', border: OutlineInputBorder()),
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        _card(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '사료 급여',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _gCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '급여량(g)',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(height: 12),
-                FilledButton.tonalIcon(
-                  onPressed: _feed,
-                  icon: const Icon(Icons.fastfood),
-                  label: const Text('급여'),
-                )
-              ],
-            ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: _feed,
+                icon: const Icon(Icons.fastfood),
+                label: const Text('급여'),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-          _card(
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('눈 질환 진단',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _diagnose,
-                  icon: const Icon(Icons.camera_alt),
-                  label: const Text('사진 찍고 진단'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      foregroundColor: Colors.white),
+        ),
+        const SizedBox(height: 24),
+        _card(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '눈 질환 진단',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _diagnose,
+                icon: const Icon(Icons.camera_alt),
+                label: const Text('사진 찍고 진단'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-          _card(
-            Column(
-              children: [
-                const Text('최근 진단 결과',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text(_diag, textAlign: TextAlign.center),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: _imgUrl == null
-                      ? Container(
-                    height: 160,
-                    color: cs.surfaceVariant,
-                    alignment: Alignment.center,
-                    child: const Text('촬영된 이미지 없음'),
-                  )
-                      : Image.network(_imgUrl!, height: 160, fit: BoxFit.cover),
-                )
-              ],
-            ),
+        ),
+        const SizedBox(height: 24),
+        _card(
+          Column(
+            children: [
+              const Text(
+                '최근 진단 결과',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(_diag, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: _imgUrl == null
+                    ? Container(
+                        height: 160,
+                        color: cs.surfaceVariant,
+                        alignment: Alignment.center,
+                        child: const Text('촬영된 이미지 없음'),
+                      )
+                    : Image.network(_imgUrl!, height: 160, fit: BoxFit.cover),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _card(Widget child) =>
-      Card(child: Padding(padding: const EdgeInsets.all(16), child: child));
+  Widget _card(Widget child) => Card(
+    child: Padding(padding: const EdgeInsets.all(16), child: child),
+  );
 
   @override
   void dispose() {
@@ -238,78 +232,47 @@ class _HomeState extends State<HomePage> {
   }
 }
 
-/* ─────────────────────────────── ② History ─────────────────────────────── */
+/* ─────────────────────────────── History ─────────────────────────────── */
 class HistoryPage extends StatelessWidget {
   const HistoryPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     final ref = FirebaseDatabase.instance.ref('feeding_log');
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('급여 기록'),
-        actions: [
-          PopupMenuButton(
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'csv', child: Text('CSV 내보내기')),
-            ],
-            onSelected: (v) {
-              if (v == 'csv') _exportCsv(context);
-            },
-          )
-        ],
-      ),
-      body: StreamBuilder(
-        stream: ref.orderByChild('timestamp').onValue,
-        builder: (ctx, AsyncSnapshot<DatabaseEvent> snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final map = snap.data?.snapshot.value as Map? ?? {};
-          final list = map.entries.toList()
-            ..sort((a, b) =>
-                (b.value['timestamp'] ?? '').compareTo(a.value['timestamp']));
-          if (list.isEmpty) {
-            return const Center(child: Text('기록 없음'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: list.length,
-            separatorBuilder: (_, __) => const Divider(),
-            itemBuilder: (ctx, i) {
-              final m = list[i].value as Map;
-              return ListTile(
-                leading: const Icon(Icons.fastfood),
-                title: Text('${m['amount_g']} g'),
-                subtitle: Text(m['timestamp'] ?? ''),
-              );
-            },
+    return StreamBuilder(
+      stream: ref.orderByChild('timestamp').onValue,
+      builder: (ctx, AsyncSnapshot<DatabaseEvent> snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final map = snap.data?.snapshot.value as Map? ?? {};
+        final list = map.entries.toList()
+          ..sort(
+            (a, b) =>
+                (b.value['timestamp'] ?? '').compareTo(a.value['timestamp']),
           );
-        },
-      ),
+        if (list.isEmpty) {
+          return const Center(child: Text('기록 없음'));
+        }
+        return ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: list.length,
+          separatorBuilder: (_, __) => const Divider(),
+          itemBuilder: (ctx, i) {
+            final m = list[i].value as Map;
+            return ListTile(
+              leading: const Icon(Icons.fastfood),
+              title: Text('${m['amount_g']} g'),
+              subtitle: Text(m['timestamp'] ?? ''),
+            );
+          },
+        );
+      },
     );
-  }
-
-  Future<void> _exportCsv(BuildContext context) async {
-    final snap = await FirebaseDatabase.instance.ref('feeding_log').get();
-    final rows = <List<String>>[
-      ['id', 'grams', 'timestamp']
-    ];
-    (snap.value as Map?)?.forEach((k, v) {
-      final m = v as Map;
-      rows.add([k, '${m['amount_g']}', m['timestamp'] ?? '']);
-    });
-    final csvData = const ListToCsvConverter().convert(rows);
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/feeding_log.csv');
-    await file.writeAsString(csvData);
-    if (context.mounted) {
-      await Share.shareXFiles([XFile(file.path)], text: 'Feeding log');
-    }
   }
 }
 
-/* ───────────────────────────── ③ Settings ───────────────────────────── */
+/* ─────────────────────────────── Settings ─────────────────────────────── */
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
   @override
@@ -330,7 +293,7 @@ class _SettingsState extends State<SettingsPage> {
     'Thu': true,
     'Fri': true,
     'Sat': true,
-    'Sun': true
+    'Sun': true,
   };
   StreamSubscription? _sub;
 
@@ -376,8 +339,7 @@ class _SettingsState extends State<SettingsPage> {
   });
 
   Future<void> _pickTime(TimeOfDay init, ValueChanged<TimeOfDay> set) async {
-    final picked =
-    await showTimePicker(context: context, initialTime: init);
+    final picked = await showTimePicker(context: context, initialTime: init);
     if (picked != null) {
       set(picked);
       _save();
@@ -387,23 +349,26 @@ class _SettingsState extends State<SettingsPage> {
   Future<void> _pickGram(int init, ValueChanged<int> set) async {
     final ctrl = TextEditingController(text: '$init');
     final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('급여량(g)'),
-          content: TextField(
-            controller: ctrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(border: OutlineInputBorder()),
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('급여량(g)'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('취소')),
-            TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('확인')),
-          ],
-        ));
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
     if (ok == true) {
       final g = int.tryParse(ctrl.text);
       if (g != null && g > 0) {
@@ -415,17 +380,6 @@ class _SettingsState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('설정'),
-      actions: [
-        IconButton(
-            tooltip: '캘리브레이션', icon: const Icon(Icons.build),
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const CalibrationPage()))),
-      ],
-    ),
     body: ListView(
       children: [
         SwitchListTile(
@@ -437,52 +391,83 @@ class _SettingsState extends State<SettingsPage> {
           },
         ),
         const Divider(),
-        _timeRow('아침', _bf, _bfG, (t) => setState(() => _bf = t),
-                (g) => setState(() => _bfG = g)),
-        _timeRow('점심', _lunch, _lG, (t) => setState(() => _lunch = t),
-                (g) => setState(() => _lG = g)),
-        _timeRow('저녁', _dinner, _dG, (t) => setState(() => _dinner = t),
-                (g) => setState(() => _dG = g)),
+        _timeRow(
+          '아침',
+          _bf,
+          _bfG,
+          (t) => setState(() => _bf = t),
+          (g) => setState(() => _bfG = g),
+        ),
+        _timeRow(
+          '점심',
+          _lunch,
+          _lG,
+          (t) => setState(() => _lunch = t),
+          (g) => setState(() => _lG = g),
+        ),
+        _timeRow(
+          '저녁',
+          _dinner,
+          _dG,
+          (t) => setState(() => _dinner = t),
+          (g) => setState(() => _dG = g),
+        ),
         const Divider(),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: const Text('요일별 자동 급여',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          child: const Text(
+            '요일별 자동 급여',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
         ),
         Wrap(
           alignment: WrapAlignment.center,
           children: _days.entries
-              .map((e) => FilterChip(
-            label: Text(e.key),
-            selected: e.value,
-            onSelected: (v) {
-              setState(() => _days[e.key] = v);
-              _save();
-            },
-          ))
+              .map(
+                (e) => FilterChip(
+                  label: Text(e.key),
+                  selected: e.value,
+                  onSelected: (v) {
+                    setState(() => _days[e.key] = v);
+                    _save();
+                  },
+                ),
+              )
               .toList(),
         ),
+        const SizedBox(height: 16),
+        Center(
+          child: FilledButton.icon(
+            icon: const Icon(Icons.build),
+            label: const Text('캘리브레이션'),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CalibrationPage()),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
       ],
     ),
   );
 
   ListTile _timeRow(
-      String name,
-      TimeOfDay time,
-      int grams,
-      ValueChanged<TimeOfDay> setTime,
-      ValueChanged<int> setGram) =>
-      ListTile(
-        leading: const Icon(Icons.schedule),
-        title: Text(name),
-        subtitle: Text('${_fmt(time)}  •  $grams g'),
-        trailing: const Icon(Icons.edit),
-        enabled: _enabled,
-        onTap: () async {
-          await _pickTime(time, setTime);
-          await _pickGram(grams, setGram);
-        },
-      );
+    String name,
+    TimeOfDay time,
+    int grams,
+    ValueChanged<TimeOfDay> setTime,
+    ValueChanged<int> setGram,
+  ) => ListTile(
+    leading: const Icon(Icons.schedule),
+    title: Text(name),
+    subtitle: Text('${_fmt(time)}  •  $grams g'),
+    trailing: const Icon(Icons.edit),
+    enabled: _enabled,
+    onTap: () async {
+      await _pickTime(time, setTime);
+      await _pickGram(grams, setGram);
+    },
+  );
 
   @override
   void dispose() {
@@ -491,7 +476,7 @@ class _SettingsState extends State<SettingsPage> {
   }
 }
 
-/* ─────────────── Calibration Page (스텝당 g 보정) ─────────────── */
+/* 캘리브레이션 페이지 그대로 유지 */
 class CalibrationPage extends StatefulWidget {
   const CalibrationPage({super.key});
   @override
@@ -499,7 +484,7 @@ class CalibrationPage extends StatefulWidget {
 }
 
 class _CalState extends State<CalibrationPage> {
-  int _stage = 0; // 0 설명 → 1 실제 측정 입력 → 2 완료
+  int _stage = 0;
   final _ctrl = TextEditingController();
 
   @override
@@ -509,42 +494,43 @@ class _CalState extends State<CalibrationPage> {
       padding: const EdgeInsets.all(24),
       child: _stage == 0
           ? Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-              '1. 빈 상태에서 “10 g 배급” 버튼을 누르세요.\n'
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '1. 빈 상태에서 “10 g 배급” 버튼을 누르세요.\n'
                   '2. 실제 저울에 나온 g 값을 입력하면 자동 계산됩니다.',
-              style: TextStyle(fontSize: 16)),
-          const Spacer(),
-          FilledButton(
-              onPressed: () {
-                FirebaseDatabase.instance
-                    .ref('commands/calibrate')
-                    .set('FEED10');
-                setState(() => _stage = 1);
-              },
-              child: const Text('10 g 배급')),
-        ],
-      )
+                  style: TextStyle(fontSize: 16),
+                ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: () {
+                    FirebaseDatabase.instance
+                        .ref('commands/calibrate')
+                        .set('FEED10');
+                    setState(() => _stage = 1);
+                  },
+                  child: const Text('10 g 배급'),
+                ),
+              ],
+            )
           : _stage == 1
           ? Column(
-        children: [
-          TextField(
-            controller: _ctrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-                labelText: '실제 측정된 g',
-                border: OutlineInputBorder()),
-          ),
-          const SizedBox(height: 24),
-          FilledButton(
-              onPressed: _submit, child: const Text('적용')),
-        ],
-      )
+              children: [
+                TextField(
+                  controller: _ctrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '실제 측정된 g',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                FilledButton(onPressed: _submit, child: const Text('적용')),
+              ],
+            )
           : Center(
-        child: Icon(Icons.check_circle,
-            color: Colors.green, size: 96),
-      ),
+              child: Icon(Icons.check_circle, color: Colors.green, size: 96),
+            ),
     ),
   );
 
